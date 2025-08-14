@@ -2,11 +2,24 @@ package run
 
 import (
 	"log"
-	"sync"
 )
 
-func Run(rpcUrl, faucetPrivateKey string, senderCount, txCount int) {
-	generator, err := NewGenerator(rpcUrl, faucetPrivateKey, senderCount, txCount, false, "")
+func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount, txCount int, mempool int) {
+	limiter := NewRateLimiter(mempool)
+
+	ethListener := NewEthereumListener(wsRpc, limiter)
+	err := ethListener.Connect()
+	if err != nil {
+		log.Fatalf("Failed to connect to WebSocket: %v", err)
+	}
+
+	// Subscribe new heads
+	err = ethListener.SubscribeNewHeads()
+	if err != nil {
+		log.Fatalf("Failed to subscribe to new heads: %v", err)
+	}
+
+	generator, err := NewGenerator(httpRpc, faucetPrivateKey, senderCount, txCount, false, "", limiter)
 	if err != nil {
 		log.Fatalf("Failed to create generator: %v", err)
 	}
@@ -16,22 +29,15 @@ func Run(rpcUrl, faucetPrivateKey string, senderCount, txCount int) {
 		log.Fatalf("Failed to generate transactions: %v", err)
 	}
 
-	transmitter, err := NewTransmitter(rpcUrl)
+	transmitter, err := NewTransmitter(httpRpc, limiter)
 	if err != nil {
 		log.Fatalf("Failed to create transmitter: %v", err)
 	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		MeasureTPS(rpcUrl)
-		wg.Done()
-	}()
 
 	err = transmitter.Broadcast(txsMap)
 	if err != nil {
 		log.Fatalf("Failed to broadcast transactions: %v", err)
 	}
 
-	wg.Wait()
+	<-ethListener.quit
 }
