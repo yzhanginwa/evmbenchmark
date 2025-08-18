@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"github.com/yzhanginwa/evmbenchmark/cmd/option"
-	"github.com/yzhanginwa/evmbenchmark/lib/load"
+	"github.com/yzhanginwa/evmbenchmark/lib/cmd/load"
 	"github.com/spf13/cobra"
 )
 

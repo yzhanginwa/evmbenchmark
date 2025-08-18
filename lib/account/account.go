@@ -35,7 +35,7 @@ func NewAccount(client *ethclient.Client) (*Account, error) {
 }
 
 func CreateFaucetAccount(client *ethclient.Client, privateKey string) (*Account, error) {
-	pk, err := convertPrivateKeyFromStringForm(privateKey) 
+	pk, err := convertPrivateKeyFromStringForm(privateKey)
 	if err != nil {
 		return &Account{}, err
 	}
