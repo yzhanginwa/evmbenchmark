@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gorilla/websocket"
 	limiterpkg "github.com/0glabs/evmchainbench/lib/limiter"
+	"github.com/gorilla/websocket"
 )
 
 type BlockInfo struct {
@@ -153,7 +153,7 @@ func (el *EthereumListener) handleBlockResponse(response map[string]interface{})
 
 				// to avoid waiting 50 seconds after the transmission is complete
 				if len(el.blockStat) >= 3 {
-					for i := 1; i <=3; i ++ {
+					for i := 1; i <= 3; i++ {
 						if el.blockStat[len(el.blockStat)-i].TxCount != 0 {
 							return
 						}

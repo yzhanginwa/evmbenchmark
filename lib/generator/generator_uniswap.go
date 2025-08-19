@@ -35,7 +35,7 @@ func (g *Generator) GenerateUniswap() (map[int]types.Transactions, error) {
 			amount0out := &big.Int{}
 			amount1out := &big.Int{}
 			for ind, _ := range g.Recipients {
-				if ind % 2 == 1 {
+				if ind%2 == 1 {
 					amount0out = big.NewInt(1000)
 					amount1out = big.NewInt(0)
 				} else {
@@ -97,8 +97,7 @@ func (g *Generator) prepareContractUniswap() (common.Address, error) {
 		return common.Address{}, err
 	}
 
-
-	uniswapContract, err :=g.deployContract(uniswap.UniswapV2FactoryBin, uniswap.UniswapV2FactoryABI, g.FaucetAccount.Address)
+	uniswapContract, err := g.deployContract(uniswap.UniswapV2FactoryBin, uniswap.UniswapV2FactoryABI, g.FaucetAccount.Address)
 	if err != nil {
 		return common.Address{}, err
 	}

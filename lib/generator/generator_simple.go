@@ -4,8 +4,8 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/0glabs/evmchainbench/lib/account"
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 func (g *Generator) GenerateSimple() (map[int]types.Transactions, error) {

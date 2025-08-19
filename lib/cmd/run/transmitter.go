@@ -43,7 +43,7 @@ func (t *Transmitter) Broadcast(txsMap map[int]types.Transactions) error {
 						}
 						break
 					} else {
-						time.Sleep(10*time.Millisecond)
+						time.Sleep(10 * time.Millisecond)
 					}
 
 				}

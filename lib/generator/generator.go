@@ -192,7 +192,7 @@ func (g *Generator) executeContractFunction(contractAddress common.Address, cont
 		g.GasPrice,
 		contractABI,
 		methodName,
-		args ...,
+		args...,
 	)
 	if err != nil {
 		return nil

@@ -10,13 +10,13 @@ import (
 )
 
 type Store struct {
-	TxStoreDir string
+	TxStoreDir     string
 	PrepareTxCache types.Transactions
 }
 
 func NewStore(txStoreDir string) *Store {
 	return &Store{
-		TxStoreDir: txStoreDir,
+		TxStoreDir:     txStoreDir,
 		PrepareTxCache: types.Transactions{},
 	}
 }
