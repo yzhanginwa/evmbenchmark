@@ -5,7 +5,7 @@ package cmd
 
 import (
 	"github.com/0glabs/evmchainbench/cmd/option"
-	"github.com/0glabs/evmchainbench/lib/run"
+	"github.com/0glabs/evmchainbench/lib/cmd/run"
 	"github.com/spf13/cobra"
 )
 
@@ -20,8 +20,10 @@ var runCmd = &cobra.Command{
 		faucetPrivateKey, _ := cmd.Flags().GetString("faucet-private-key")
 		senderCount, _ := cmd.Flags().GetInt("sender-count")
 		txCount, _ := cmd.Flags().GetInt("tx-count")
+		txType, _ := cmd.Flags().GetString("tx-type")
 		mempool, _ := cmd.Flags().GetInt("mempool")
-		run.Run(httpRpc, wsRpc, faucetPrivateKey, senderCount, txCount, mempool)
+
+		run.Run(httpRpc, wsRpc, faucetPrivateKey, senderCount, txCount, txType, mempool)
 	},
 }
 

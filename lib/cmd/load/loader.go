@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/0glabs/evmchainbench/lib/run"
+	"github.com/0glabs/evmchainbench/lib/cmd/run"
 	"github.com/0glabs/evmchainbench/lib/store"
 	"github.com/0glabs/evmchainbench/lib/util"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -41,7 +41,7 @@ func (l *Loader) LoadAndRun() error {
 		}
 	}
 
-	err = util.WaitForReceiptsOfTxs(client, txs, 5*time.Second)
+	err = util.WaitForReceiptsOfTxs(client, txs, 10*time.Second)
 	if err != nil {
 		return err
 	}
