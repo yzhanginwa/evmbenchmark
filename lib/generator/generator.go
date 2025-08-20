@@ -137,7 +137,7 @@ func (g *Generator) prepareSenders() error {
 	return nil
 }
 
-func (g *Generator) deployContract(contractBin, contractABI string, args ...interface{}) (common.Address, error) {
+func (g *Generator) deployContract(gasLimit uint64, contractBin, contractABI string, args ...interface{}) (common.Address, error) {
 	client, err := ethclient.Dial(g.RpcUrl)
 	if err != nil {
 		return common.Address{}, err
@@ -149,6 +149,7 @@ func (g *Generator) deployContract(contractBin, contractABI string, args ...inte
 		g.FaucetAccount.GetNonce(),
 		g.ChainID,
 		g.GasPrice,
+		gasLimit,
 		contractBin,
 		contractABI,
 		args...,
@@ -177,7 +178,7 @@ func (g *Generator) deployContract(contractBin, contractABI string, args ...inte
 	return ercContractAddress, nil
 }
 
-func (g *Generator) executeContractFunction(contractAddress common.Address, contractABI, methodName string, args ...interface{}) error {
+func (g *Generator) executeContractFunction(gasLimit uint64, contractAddress common.Address, contractABI, methodName string, args ...interface{}) error {
 	client, err := ethclient.Dial(g.RpcUrl)
 	if err != nil {
 		return err
@@ -190,6 +191,7 @@ func (g *Generator) executeContractFunction(contractAddress common.Address, cont
 		g.FaucetAccount.GetNonce(),
 		g.ChainID,
 		g.GasPrice,
+		gasLimit,
 		contractABI,
 		methodName,
 		args...,
