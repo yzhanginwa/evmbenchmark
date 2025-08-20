@@ -48,6 +48,7 @@ func (g *Generator) GenerateUniswap() (map[int]types.Transactions, error) {
 					sender.GetNonce(),
 					g.ChainID,
 					g.GasPrice,
+					uniswapSwapGasLimit,
 					uniswap.UniswapV2PairABI,
 					"swap",
 					amount0out,
@@ -87,22 +88,22 @@ func (g *Generator) GenerateUniswap() (map[int]types.Transactions, error) {
 }
 
 func (g *Generator) prepareContractUniswap() (common.Address, error) {
-	tokenA, err := g.deployContract(erc20.MyTokenBin, erc20.MyTokenABI, "Token A", "TOKENA")
+	tokenA, err := g.deployContract(erc20ContractGasLimit, erc20.MyTokenBin, erc20.MyTokenABI, "Token A", "TOKENA")
 	if err != nil {
 		return common.Address{}, err
 	}
 
-	tokenB, err := g.deployContract(erc20.MyTokenBin, erc20.MyTokenABI, "Token B", "TOKENB")
+	tokenB, err := g.deployContract(erc20ContractGasLimit, erc20.MyTokenBin, erc20.MyTokenABI, "Token B", "TOKENB")
 	if err != nil {
 		return common.Address{}, err
 	}
 
-	uniswapContract, err := g.deployContract(uniswap.UniswapV2FactoryBin, uniswap.UniswapV2FactoryABI, g.FaucetAccount.Address)
+	uniswapContract, err := g.deployContract(uniswapContractGasLimit, uniswap.UniswapV2FactoryBin, uniswap.UniswapV2FactoryABI, g.FaucetAccount.Address)
 	if err != nil {
 		return common.Address{}, err
 	}
 
-	err = g.executeContractFunction(uniswapContract, uniswap.UniswapV2FactoryABI, "createPair", tokenA, tokenB)
+	err = g.executeContractFunction(uniswapCreatePairGasLimit, uniswapContract, uniswap.UniswapV2FactoryABI, "createPair", tokenA, tokenB)
 	if err != nil {
 		return common.Address{}, err
 	}
@@ -116,17 +117,17 @@ func (g *Generator) prepareContractUniswap() (common.Address, error) {
 	pairContract := data[0].(common.Address)
 
 	amount := big.NewInt(1000000000000000000)
-	err = g.executeContractFunction(tokenA, erc20.MyTokenABI, "transfer", pairContract, amount)
+	err = g.executeContractFunction(erc20TransferGasLimit, tokenA, erc20.MyTokenABI, "transfer", pairContract, amount)
 	if err != nil {
 		return common.Address{}, err
 	}
 
-	err = g.executeContractFunction(tokenB, erc20.MyTokenABI, "transfer", pairContract, amount)
+	err = g.executeContractFunction(erc20TransferGasLimit, tokenB, erc20.MyTokenABI, "transfer", pairContract, amount)
 	if err != nil {
 		return common.Address{}, err
 	}
 
-	err = g.executeContractFunction(pairContract, uniswap.UniswapV2PairABI, "mint", g.FaucetAccount.Address)
+	err = g.executeContractFunction(uniswapMintGasLimit, pairContract, uniswap.UniswapV2PairABI, "mint", g.FaucetAccount.Address)
 	if err != nil {
 		return common.Address{}, err
 	}

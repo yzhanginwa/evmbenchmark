@@ -40,6 +40,7 @@ func (g *Generator) GenerateERC20() (map[int]types.Transactions, error) {
 					sender.GetNonce(),
 					g.ChainID,
 					g.GasPrice,
+					erc20TransferGasLimit,
 					erc20.MyTokenABI,
 					"transfer",
 					common.HexToAddress(recipient),
@@ -77,5 +78,5 @@ func (g *Generator) GenerateERC20() (map[int]types.Transactions, error) {
 }
 
 func (g *Generator) prepareContractERC20() (common.Address, error) {
-	return g.deployContract(erc20.MyTokenBin, erc20.MyTokenABI, "My Token", "MYTOKEN")
+	return g.deployContract(erc20ContractGasLimit, erc20.MyTokenBin, erc20.MyTokenABI, "My Token", "MYTOKEN")
 }
