@@ -48,9 +48,19 @@ func NewGenerator(rpcUrl, faucetPrivateKey string, senderCount, txCount int, sho
 
 	fmt.Println("EIP-1559:", eip1559)
 
-	gasPrice, err := client.SuggestGasPrice(context.Background())
-	if err != nil {
-		return &Generator{}, err
+	var gasPrice *big.Int
+	if eip1559 {
+		tipCap, tipErr := client.SuggestGasTipCap(context.Background())
+		if tipErr != nil || tipCap.Sign() == 0 {
+			tipCap = big.NewInt(1000000000) // default 1 Gwei tip
+		}
+		// GasFeeCap = baseFee * 2 + tipCap to stay above fluctuating base fee
+		gasPrice = new(big.Int).Add(new(big.Int).Mul(header.BaseFee, big.NewInt(2)), tipCap)
+	} else {
+		gasPrice, err = client.SuggestGasPrice(context.Background())
+		if err != nil {
+			return &Generator{}, err
+		}
 	}
 
 	chainID, err := client.NetworkID(context.Background())
