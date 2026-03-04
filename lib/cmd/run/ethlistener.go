@@ -11,6 +11,8 @@ import (
 	limiterpkg "github.com/yzhanginwa/evmbenchmark/lib/limiter"
 )
 
+const tuneWarmupSeconds = int64(10)
+
 type BlockInfo struct {
 	Time     int64
 	TxCount  int64
@@ -26,14 +28,44 @@ type EthereumListener struct {
 	quit             chan struct{}
 	bestTPS          int64
 	gasUsedAtBestTPS float64
+
+	// auto-tune fields
+	autoTune        bool
+	verbose         bool
+	tuneInitialized bool
+	tuneConverged   bool
+	tuneDirection   int
+	tuneStep        int
+	tuneMinStep     int
+	tuneWarmup      int64
+	tuneRefTPS      int64
+	tuneBestTPS     int64
+	tuneBestMempool int
 }
 
-func NewEthereumListener(wsURL string, limiter *limiterpkg.RateLimiter) *EthereumListener {
-	return &EthereumListener{
-		wsURL:   wsURL,
-		limiter: limiter,
-		quit:    make(chan struct{}),
+func NewEthereumListener(wsURL string, limiter *limiterpkg.RateLimiter, autoTune, verbose bool) *EthereumListener {
+	el := &EthereumListener{
+		wsURL:    wsURL,
+		limiter:  limiter,
+		quit:     make(chan struct{}),
+		autoTune: autoTune,
+		verbose:  verbose,
 	}
+	if autoTune {
+		current := limiter.GetMax()
+		el.tuneDirection = 1
+		el.tuneStep = current // Option B: start with a full-sized step
+		if el.tuneStep < 1 {
+			el.tuneStep = 1
+		}
+		el.tuneMinStep = current / 10
+		if el.tuneMinStep < 1 {
+			el.tuneMinStep = 1
+		}
+		el.tuneWarmup = tuneWarmupSeconds
+		el.tuneBestMempool = current
+	}
+	return el
 }
 
 func (el *EthereumListener) Connect() error {
@@ -127,8 +159,12 @@ func (el *EthereumListener) handleBlockResponse(response map[string]interface{})
 				}
 			}
 			timeSpan := el.blockStat[len(el.blockStat)-1].Time - el.blockStat[0].Time
-			// calculate TPS and gas used percentage only after 30 seconds
-			if timeSpan > 30 {
+			// Option A: use a shorter warmup window during tuning cycles
+			warmup := int64(30)
+			if el.autoTune && el.tuneInitialized && !el.tuneConverged {
+				warmup = el.tuneWarmup
+			}
+			if timeSpan > warmup {
 				totalTxCount := int64(0)
 				totalGasLimit := int64(0)
 				totalGasUsed := int64(0)
@@ -144,9 +180,17 @@ func (el *EthereumListener) handleBlockResponse(response map[string]interface{})
 					el.gasUsedAtBestTPS = gasUsedPercent
 				}
 				fmt.Println("TPS:", tps, "GasUsed%:", gasUsedPercent*100)
+
+				if el.autoTune && !el.tuneConverged {
+					el.adjustMempool(tps)
+				}
+
 				if totalTxCount < 100 {
 					// exit if total tx count is less than 100
 					fmt.Println("Best TPS:", el.bestTPS, "GasUsed%:", el.gasUsedAtBestTPS*100)
+					if el.autoTune {
+						fmt.Printf("[AutoTune] Optimal mempool: %d (TPS: %d)\n", el.tuneBestMempool, el.tuneBestTPS)
+					}
 					el.Close()
 					return
 				}
@@ -159,11 +203,116 @@ func (el *EthereumListener) handleBlockResponse(response map[string]interface{})
 						}
 					}
 					fmt.Println("Best TPS:", el.bestTPS, "GasUsed%:", el.gasUsedAtBestTPS*100)
+					if el.autoTune {
+						fmt.Printf("[AutoTune] Optimal mempool: %d (TPS: %d)\n", el.tuneBestMempool, el.tuneBestTPS)
+					}
 					el.Close()
 				}
 
 			}
 		}
+	}
+}
+
+// adjustMempool runs one step of the exponential-search + binary-contraction
+// auto-tune algorithm. It is called after each fresh TPS measurement.
+func (el *EthereumListener) adjustMempool(currentTPS int64) {
+	current := el.limiter.GetMax()
+
+	if !el.tuneInitialized {
+		// Saturation check: if the mempool never blocked, tuning cannot help.
+		blocked := el.limiter.BlockedAcquires()
+		if blocked == 0 {
+			fmt.Println("[AutoTune] Warning: mempool never filled; cannot auto-tune. Use a smaller --mempool value.")
+			el.tuneConverged = true
+			return
+		}
+		el.tuneRefTPS = currentTPS
+		el.blockStat = nil
+		el.tuneWarmup = tuneWarmupSeconds
+		newMax := current + el.tuneDirection*el.tuneStep
+		if newMax < 1 {
+			newMax = 1
+		}
+		fmt.Printf("[AutoTune] Baseline TPS=%d, trying mempool %d → %d\n", currentTPS, current, newMax)
+		if el.verbose {
+			fmt.Printf("[AutoTune] blockedAcquires=%d, step=%d, minStep=%d\n",
+				blocked, el.tuneStep, el.tuneMinStep)
+		}
+		el.limiter.SetMax(newMax)
+		el.tuneInitialized = true
+		return
+	}
+
+	// Track best observed (TPS, mempool) pair.
+	if currentTPS > el.tuneBestTPS {
+		el.tuneBestTPS = currentTPS
+		el.tuneBestMempool = current
+	}
+
+	// Guard against zero reference to avoid division by zero.
+	if el.tuneRefTPS == 0 {
+		el.tuneRefTPS = currentTPS
+		return
+	}
+
+	improvement := float64(currentTPS-el.tuneRefTPS) / float64(el.tuneRefTPS)
+
+	if improvement > 0.10 {
+		// TPS improved: double the step and keep going in the same direction.
+		prevTPS := el.tuneRefTPS
+		el.tuneStep *= 2
+		el.tuneRefTPS = currentTPS
+		el.blockStat = nil
+		el.tuneWarmup = tuneWarmupSeconds
+		newMax := current + el.tuneDirection*el.tuneStep
+		if newMax < 1 {
+			newMax = 1
+		}
+		fmt.Printf("[AutoTune] Improved %d→%d, continuing → mempool=%d (step=%d)\n",
+			prevTPS, currentTPS, newMax, el.tuneStep)
+		if el.verbose {
+			fmt.Printf("[AutoTune] improvement=+%.1f%%, blockedAcquires=%d, direction=%+d\n",
+				improvement*100, el.limiter.BlockedAcquires(), el.tuneDirection)
+		}
+		el.limiter.SetMax(newMax)
+	} else if improvement < -0.10 {
+		// TPS worsened: halve the step and reverse direction.
+		prevTPS := el.tuneRefTPS
+		el.tuneStep /= 2
+		if el.tuneStep < el.tuneMinStep {
+			fmt.Printf("[AutoTune] Converged. Best TPS=%d at mempool=%d\n",
+				el.tuneBestTPS, el.tuneBestMempool)
+			if el.verbose {
+				fmt.Printf("[AutoTune] improvement=%.1f%%, step=%d < minStep=%d\n",
+					improvement*100, el.tuneStep, el.tuneMinStep)
+			}
+			el.tuneConverged = true
+			return
+		}
+		el.tuneDirection = -el.tuneDirection
+		el.tuneRefTPS = currentTPS
+		el.blockStat = nil
+		el.tuneWarmup = tuneWarmupSeconds
+		newMax := current + el.tuneDirection*el.tuneStep
+		if newMax < 1 {
+			newMax = 1
+		}
+		fmt.Printf("[AutoTune] Worsened %d→%d, reversing → mempool=%d (step=%d)\n",
+			prevTPS, currentTPS, newMax, el.tuneStep)
+		if el.verbose {
+			fmt.Printf("[AutoTune] improvement=%.1f%%, blockedAcquires=%d, direction=%+d\n",
+				improvement*100, el.limiter.BlockedAcquires(), el.tuneDirection)
+		}
+		el.limiter.SetMax(newMax)
+	} else {
+		// TPS within ±10%: converged.
+		fmt.Printf("[AutoTune] Within 10%% of reference — converged\n")
+		if el.verbose {
+			fmt.Printf("[AutoTune] improvement=%.1f%%, bestTPS=%d, bestMempool=%d\n",
+				improvement*100, el.tuneBestTPS, el.tuneBestMempool)
+		}
+		el.tuneConverged = true
 	}
 }
 

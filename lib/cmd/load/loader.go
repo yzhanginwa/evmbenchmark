@@ -57,7 +57,7 @@ func (l *Loader) LoadAndRun() error {
 		return err
 	}
 
-	err = transmitter.Broadcast(txsMap)
+	err = transmitter.BroadcastTxsMap(txsMap)
 	if err != nil {
 		return err
 	}

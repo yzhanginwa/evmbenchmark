@@ -19,15 +19,18 @@ var runCmd = &cobra.Command{
 		wsRpc, _ := cmd.Flags().GetString("ws-rpc")
 		faucetPrivateKey, _ := cmd.Flags().GetString("faucet-private-key")
 		senderCount, _ := cmd.Flags().GetInt("sender-count")
-		txCount, _ := cmd.Flags().GetInt("tx-count")
 		txType, _ := cmd.Flags().GetString("tx-type")
 		mempool, _ := cmd.Flags().GetInt("mempool")
+		autoTune, _ := cmd.Flags().GetBool("auto-tune")
+		verbose, _ := cmd.Flags().GetBool("verbose")
 
-		run.Run(httpRpc, wsRpc, faucetPrivateKey, senderCount, txCount, txType, mempool)
+		run.Run(httpRpc, wsRpc, faucetPrivateKey, senderCount, txType, mempool, autoTune, verbose)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(runCmd)
-	option.OptionsForGeneration(runCmd)
+	option.OptionsForRun(runCmd)
+	runCmd.Flags().BoolP("auto-tune", "", false, "Automatically tune mempool size to maximize TPS")
+	runCmd.Flags().BoolP("verbose", "v", false, "Print detailed status during auto-tuning")
 }

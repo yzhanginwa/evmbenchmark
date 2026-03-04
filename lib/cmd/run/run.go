@@ -5,40 +5,38 @@ import (
 
 	"github.com/yzhanginwa/evmbenchmark/lib/generator"
 	limiterpkg "github.com/yzhanginwa/evmbenchmark/lib/limiter"
-	"github.com/ethereum/go-ethereum/core/types"
 )
 
-func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount, txCount int, txType string, mempool int) {
-	generator, err := generator.NewGenerator(httpRpc, faucetPrivateKey, senderCount, txCount, false, "")
+func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount int, txType string, mempool int, autoTune, verbose bool) {
+	gen, err := generator.NewGenerator(httpRpc, faucetPrivateKey, senderCount, 0, false, "")
 	if err != nil {
 		log.Fatalf("Failed to create generator: %v", err)
 	}
 
-	var txsMap map[int]types.Transactions
+	var senders []generator.SenderInfo
 
 	switch txType {
 	case "simple":
-		txsMap, err = generator.GenerateSimple()
+		senders, err = gen.PrepareSimple()
 	case "erc20":
-		txsMap, err = generator.GenerateERC20()
+		senders, err = gen.PrepareERC20()
 	case "uniswap":
-		txsMap, err = generator.GenerateUniswap()
+		senders, err = gen.PrepareUniswap()
 	default:
 		log.Fatalf("Transaction type \"%v\" is not valid", txType)
 	}
 	if err != nil {
-		log.Fatalf("Failed to generate transactions: %v", err)
+		log.Fatalf("Failed to prepare: %v", err)
 	}
 
 	limiter := limiterpkg.NewRateLimiter(mempool)
 
-	ethListener := NewEthereumListener(wsRpc, limiter)
+	ethListener := NewEthereumListener(wsRpc, limiter, autoTune, verbose)
 	err = ethListener.Connect()
 	if err != nil {
 		log.Fatalf("Failed to connect to WebSocket: %v", err)
 	}
 
-	// Subscribe new heads
 	err = ethListener.SubscribeNewHeads()
 	if err != nil {
 		log.Fatalf("Failed to subscribe to new heads: %v", err)
@@ -49,7 +47,7 @@ func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount, txCount int, txTy
 		log.Fatalf("Failed to create transmitter: %v", err)
 	}
 
-	err = transmitter.Broadcast(txsMap)
+	err = transmitter.Broadcast(senders, txType, gen.GasPrice)
 	if err != nil {
 		log.Fatalf("Failed to broadcast transactions: %v", err)
 	}

@@ -19,6 +19,18 @@ import (
 	"github.com/yzhanginwa/evmbenchmark/lib/util"
 )
 
+// senderFundingEth is the amount of ETH sent to each sender during preparation.
+const senderFundingEth = int64(10000)
+
+// SenderInfo holds all info needed for on-the-fly transaction generation.
+type SenderInfo struct {
+	Account         *account.Account
+	Balance         *big.Int
+	ContractAddress string // empty for simple transfers
+	ChainID         *big.Int
+	EIP1559         bool
+}
+
 type Generator struct {
 	FaucetAccount *account.Account
 	Senders       []*account.Account
@@ -114,7 +126,7 @@ func (g *Generator) prepareSenders() error {
 	defer client.Close()
 
 	value := new(big.Int)
-	value.Mul(big.NewInt(1000000000000000000), big.NewInt(100)) // 100 Eth
+	value.Mul(big.NewInt(1e18), big.NewInt(senderFundingEth))
 
 	txs := types.Transactions{}
 
