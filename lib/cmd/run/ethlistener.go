@@ -41,6 +41,8 @@ type EthereumListener struct {
 	tuneRefTPS      int64
 	tuneBestTPS     int64
 	tuneBestMempool int
+
+	tpsLineActive bool // true when the cursor is sitting on the \r TPS line
 }
 
 func NewEthereumListener(wsURL string, limiter *limiterpkg.RateLimiter, autoTune, verbose bool) *EthereumListener {
@@ -179,7 +181,8 @@ func (el *EthereumListener) handleBlockResponse(response map[string]interface{})
 					el.bestTPS = tps
 					el.gasUsedAtBestTPS = gasUsedPercent
 				}
-				fmt.Println("TPS:", tps, "GasUsed%:", gasUsedPercent*100)
+				fmt.Printf("\rTPS: %-6d  GasUsed%%: %-6.2f%%", tps, gasUsedPercent*100)
+				el.tpsLineActive = true
 
 				if el.autoTune && !el.tuneConverged {
 					el.adjustMempool(tps)
@@ -187,6 +190,7 @@ func (el *EthereumListener) handleBlockResponse(response map[string]interface{})
 
 				if totalTxCount < 100 {
 					// exit if total tx count is less than 100
+					el.ensureNewLine()
 					fmt.Println("Best TPS:", el.bestTPS, "GasUsed%:", el.gasUsedAtBestTPS*100)
 					if el.autoTune {
 						fmt.Printf("[AutoTune] Optimal mempool: %d (TPS: %d)\n", el.tuneBestMempool, el.tuneBestTPS)
@@ -202,6 +206,7 @@ func (el *EthereumListener) handleBlockResponse(response map[string]interface{})
 							return
 						}
 					}
+					el.ensureNewLine()
 					fmt.Println("Best TPS:", el.bestTPS, "GasUsed%:", el.gasUsedAtBestTPS*100)
 					if el.autoTune {
 						fmt.Printf("[AutoTune] Optimal mempool: %d (TPS: %d)\n", el.tuneBestMempool, el.tuneBestTPS)
@@ -217,6 +222,7 @@ func (el *EthereumListener) handleBlockResponse(response map[string]interface{})
 // adjustMempool runs one step of the exponential-search + binary-contraction
 // auto-tune algorithm. It is called after each fresh TPS measurement.
 func (el *EthereumListener) adjustMempool(currentTPS int64) {
+	el.ensureNewLine()
 	current := el.limiter.GetMax()
 
 	if !el.tuneInitialized {
@@ -313,6 +319,15 @@ func (el *EthereumListener) adjustMempool(currentTPS int64) {
 				improvement*100, el.tuneBestTPS, el.tuneBestMempool)
 		}
 		el.tuneConverged = true
+	}
+}
+
+// ensureNewLine moves the cursor to a fresh line if the TPS status line is active.
+// Call this before printing any output that should not overwrite the TPS line.
+func (el *EthereumListener) ensureNewLine() {
+	if el.tpsLineActive {
+		fmt.Println()
+		el.tpsLineActive = false
 	}
 }
 

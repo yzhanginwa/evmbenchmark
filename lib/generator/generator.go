@@ -214,6 +214,7 @@ func (g *Generator) executeContractFunction(gasLimit uint64, contractAddress com
 		g.ChainID,
 		g.GasPrice,
 		gasLimit,
+		g.EIP1559,
 		contractABI,
 		methodName,
 		args...,

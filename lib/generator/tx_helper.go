@@ -77,7 +77,7 @@ func GenerateContractCreationTx(privateKey *ecdsa.PrivateKey, nonce uint64, chai
 	return signedTx, nil
 }
 
-func GenerateContractCallingTx(privateKey *ecdsa.PrivateKey, contractAddress string, nonce uint64, chainID, gasPrice *big.Int, gasLimit uint64, contractABI, method string, args ...interface{}) (*types.Transaction, error) {
+func GenerateContractCallingTx(privateKey *ecdsa.PrivateKey, contractAddress string, nonce uint64, chainID, gasPrice *big.Int, gasLimit uint64, eip1559 bool, contractABI, method string, args ...interface{}) (*types.Transaction, error) {
 	abi, err := abipkg.JSON(strings.NewReader(contractABI))
 	if err != nil {
 		return &types.Transaction{}, err
@@ -89,16 +89,24 @@ func GenerateContractCallingTx(privateKey *ecdsa.PrivateKey, contractAddress str
 	}
 
 	toAddress := common.HexToAddress(contractAddress)
-	tx := types.NewTransaction(
-		nonce,
-		toAddress,
-		big.NewInt(0),
-		gasLimit,
-		gasPrice,
-		data,
-	)
 
-	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
+	var signedTx *types.Transaction
+	if eip1559 {
+		tx := types.NewTx(&types.DynamicFeeTx{
+			ChainID:   chainID,
+			Nonce:     nonce,
+			To:        &toAddress,
+			Gas:       gasLimit,
+			GasFeeCap: gasPrice,
+			GasTipCap: gasPrice,
+			Data:      data,
+		})
+		signedTx, err = types.SignTx(tx, types.NewLondonSigner(chainID), privateKey)
+	} else {
+		tx := types.NewTransaction(nonce, toAddress, big.NewInt(0), gasLimit, gasPrice, data)
+		signedTx, err = types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
+	}
+
 	if err != nil {
 		return &types.Transaction{}, err
 	}

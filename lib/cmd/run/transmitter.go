@@ -33,9 +33,44 @@ func NewTransmitter(rpcUrl string, limiter *limiterpkg.RateLimiter) (*Transmitte
 	}, nil
 }
 
+// freshGasPrice fetches the current gas price from the node using the same
+// EIP-1559 logic as the generator, so it is always up-to-date at broadcast time.
+func (t *Transmitter) freshGasPrice(eip1559 bool) (*big.Int, error) {
+	client, err := ethclient.Dial(t.RpcUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	if eip1559 {
+		header, err := client.HeaderByNumber(context.Background(), nil)
+		if err != nil {
+			return nil, err
+		}
+		tipCap, tipErr := client.SuggestGasTipCap(context.Background())
+		if tipErr != nil || tipCap.Sign() == 0 {
+			tipCap = big.NewInt(1_000_000_000) // 1 Gwei default
+		}
+		return new(big.Int).Add(new(big.Int).Mul(header.BaseFee, big.NewInt(2)), tipCap), nil
+	}
+
+	return client.SuggestGasPrice(context.Background())
+}
+
 // Broadcast spawns one goroutine per sender. Each goroutine generates and signs
 // transactions on-the-fly until the sender's ETH balance is exhausted.
-func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string, gasPrice *big.Int) error {
+func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string) error {
+	if len(senders) == 0 {
+		return nil
+	}
+
+	// Fetch a fresh gas price — the prepare phase can take several minutes,
+	// making any pre-computed price stale by the time broadcasting starts.
+	gasPrice, err := t.freshGasPrice(senders[0].EIP1559)
+	if err != nil {
+		return err
+	}
+
 	ch := make(chan error, len(senders))
 
 	for _, si := range senders {
@@ -100,6 +135,7 @@ func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string, g
 						si.ChainID,
 						gasPrice,
 						gasLimit,
+						si.EIP1559,
 						erc20.MyTokenABI,
 						"transfer",
 						common.HexToAddress(recipient),
@@ -125,6 +161,7 @@ func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string, g
 						si.ChainID,
 						gasPrice,
 						gasLimit,
+						si.EIP1559,
 						uniswap.UniswapV2PairABI,
 						"swap",
 						amount0out,

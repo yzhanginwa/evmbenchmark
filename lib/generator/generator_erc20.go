@@ -45,6 +45,7 @@ func (g *Generator) GenerateERC20() (map[int]types.Transactions, error) {
 					g.ChainID,
 					g.GasPrice,
 					erc20TransferGasLimit,
+					g.EIP1559,
 					erc20.MyTokenABI,
 					"transfer",
 					common.HexToAddress(recipient),

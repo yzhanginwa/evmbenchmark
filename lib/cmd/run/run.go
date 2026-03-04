@@ -47,7 +47,7 @@ func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount int, txType string
 		log.Fatalf("Failed to create transmitter: %v", err)
 	}
 
-	err = transmitter.Broadcast(senders, txType, gen.GasPrice)
+	err = transmitter.Broadcast(senders, txType)
 	if err != nil {
 		log.Fatalf("Failed to broadcast transactions: %v", err)
 	}

@@ -53,6 +53,7 @@ func (g *Generator) GenerateUniswap() (map[int]types.Transactions, error) {
 					g.ChainID,
 					g.GasPrice,
 					uniswapSwapGasLimit,
+					g.EIP1559,
 					uniswap.UniswapV2PairABI,
 					"swap",
 					amount0out,
