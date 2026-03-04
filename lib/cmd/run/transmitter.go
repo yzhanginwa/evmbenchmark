@@ -57,18 +57,15 @@ func (t *Transmitter) freshGasPrice(eip1559 bool) (*big.Int, error) {
 	return client.SuggestGasPrice(context.Background())
 }
 
+// gasPriceRefreshEvery controls how often each sender goroutine re-fetches the
+// current gas price to stay ahead of rising base fees during long runs.
+const gasPriceRefreshEvery = 50
+
 // Broadcast spawns one goroutine per sender. Each goroutine generates and signs
 // transactions on-the-fly until the sender's ETH balance is exhausted.
 func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string) error {
 	if len(senders) == 0 {
 		return nil
-	}
-
-	// Fetch a fresh gas price — the prepare phase can take several minutes,
-	// making any pre-computed price stale by the time broadcasting starts.
-	gasPrice, err := t.freshGasPrice(senders[0].EIP1559)
-	if err != nil {
-		return err
 	}
 
 	ch := make(chan error, len(senders))
@@ -84,7 +81,6 @@ func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string) e
 
 			balance := new(big.Int).Set(si.Balance)
 
-			// Pre-compute per-tx cost (constant for a given txType and gasPrice).
 			var gasLimit uint64
 			var transferValue *big.Int
 			switch txType {
@@ -95,6 +91,14 @@ func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string) e
 				gasLimit = contractCallGasLimit
 				transferValue = big.NewInt(0)
 			}
+
+			// Fetch initial gas price and compute per-tx cost.
+			// cost is recomputed whenever gasPrice is refreshed.
+			gasPrice, err := t.freshGasPrice(si.EIP1559)
+			if err != nil {
+				ch <- err
+				return
+			}
 			gasCost := new(big.Int).Mul(gasPrice, new(big.Int).SetUint64(gasLimit))
 			cost := new(big.Int).Add(gasCost, transferValue)
 
@@ -102,6 +106,15 @@ func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string) e
 			for {
 				if balance.Cmp(cost) < 0 {
 					break
+				}
+
+				// Periodically refresh gas price to stay ahead of rising base fees.
+				if txIndex > 0 && txIndex%gasPriceRefreshEvery == 0 {
+					if fresh, err := t.freshGasPrice(si.EIP1559); err == nil {
+						gasPrice = fresh
+						gasCost := new(big.Int).Mul(gasPrice, new(big.Int).SetUint64(gasLimit))
+						cost = new(big.Int).Add(gasCost, transferValue)
+					}
 				}
 
 				nonce := si.Account.GetNonce()
