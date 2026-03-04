@@ -127,8 +127,8 @@ func (el *EthereumListener) handleBlockResponse(response map[string]interface{})
 				}
 			}
 			timeSpan := el.blockStat[len(el.blockStat)-1].Time - el.blockStat[0].Time
-			// calculate TPS and gas used percentage
-			if timeSpan > 50 {
+			// calculate TPS and gas used percentage only after 30 seconds
+			if timeSpan > 30 {
 				totalTxCount := int64(0)
 				totalGasLimit := int64(0)
 				totalGasUsed := int64(0)
@@ -158,7 +158,7 @@ func (el *EthereumListener) handleBlockResponse(response map[string]interface{})
 							return
 						}
 					}
-					fmt.Println("Best TPS:", el.bestTPS, "GasUsed%:", el.gasUsedAtBestTPS)
+					fmt.Println("Best TPS:", el.bestTPS, "GasUsed%:", el.gasUsedAtBestTPS*100)
 					el.Close()
 				}
 

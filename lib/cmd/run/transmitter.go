@@ -2,7 +2,6 @@ package run
 
 import (
 	"context"
-	"time"
 
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -34,18 +33,13 @@ func (t *Transmitter) Broadcast(txsMap map[int]types.Transactions) error {
 			}
 
 			for _, tx := range txs {
-				for {
-					if t.limiter == nil || t.limiter.AllowRequest() {
-						err := broadcast(client, tx)
-						if err != nil {
-							ch <- err
-							return
-						}
-						break
-					} else {
-						time.Sleep(10 * time.Millisecond)
-					}
-
+				if t.limiter != nil {
+					t.limiter.Acquire()
+				}
+				err := broadcast(client, tx)
+				if err != nil {
+					ch <- err
+					return
 				}
 			}
 			ch <- nil

@@ -1,35 +1,34 @@
-package run
+package limiter
 
 import (
-	"fmt"
 	"sync"
 )
 
 type RateLimiter struct {
-	mutex     sync.Mutex
+	mu        sync.Mutex
+	cond      *sync.Cond
 	remaining int
 }
 
 func NewRateLimiter(maxRequests int) *RateLimiter {
-	return &RateLimiter{
-		remaining: maxRequests,
-	}
+	rl := &RateLimiter{remaining: maxRequests}
+	rl.cond = sync.NewCond(&rl.mu)
+	return rl
 }
 
-func (rl *RateLimiter) AllowRequest() bool {
-	rl.mutex.Lock()
-	defer rl.mutex.Unlock()
-
-	if rl.remaining > 0 {
-		rl.remaining--
-		return true
+// Acquire blocks until a slot is available, then claims it.
+func (rl *RateLimiter) Acquire() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	for rl.remaining == 0 {
+		rl.cond.Wait()
 	}
-	return false
+	rl.remaining--
 }
 
 func (rl *RateLimiter) IncreaseLimit(newCapacity int) {
-	rl.mutex.Lock()
+	rl.mu.Lock()
 	rl.remaining += newCapacity
-	rl.mutex.Unlock()
-	fmt.Println("Remaining requests:", rl.remaining)
+	rl.cond.Broadcast()
+	rl.mu.Unlock()
 }
