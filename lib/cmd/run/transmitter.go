@@ -63,7 +63,7 @@ const gasPriceRefreshEvery = 50
 
 // Broadcast spawns one goroutine per sender. Each goroutine generates and signs
 // transactions on-the-fly until the sender's ETH balance is exhausted.
-func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string) error {
+func (t *Transmitter) Broadcast(ctx context.Context, senders []generator.SenderInfo, txType string) error {
 	if len(senders) == 0 {
 		return nil
 	}
@@ -104,6 +104,13 @@ func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string) e
 
 			txIndex := 0
 			for {
+				select {
+				case <-ctx.Done():
+					ch <- nil
+					return
+				default:
+				}
+
 				if balance.Cmp(cost) < 0 {
 					break
 				}
@@ -190,6 +197,13 @@ func (t *Transmitter) Broadcast(senders []generator.SenderInfo, txType string) e
 
 				if t.limiter != nil {
 					t.limiter.Acquire()
+				}
+
+				select {
+				case <-ctx.Done():
+					ch <- nil
+					return
+				default:
 				}
 
 				if err := broadcast(client, tx); err != nil {

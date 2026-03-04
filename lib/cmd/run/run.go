@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"log"
 
 	"github.com/yzhanginwa/evmbenchmark/lib/generator"
@@ -31,7 +32,9 @@ func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount int, txType string
 
 	limiter := limiterpkg.NewRateLimiter(mempool)
 
-	ethListener := NewEthereumListener(wsRpc, limiter, autoTune, verbose)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ethListener := NewEthereumListener(wsRpc, limiter, autoTune, verbose, cancel)
 	err = ethListener.Connect()
 	if err != nil {
 		log.Fatalf("Failed to connect to WebSocket: %v", err)
@@ -47,10 +50,11 @@ func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount int, txType string
 		log.Fatalf("Failed to create transmitter: %v", err)
 	}
 
-	err = transmitter.Broadcast(senders, txType)
+	err = transmitter.Broadcast(ctx, senders, txType)
 	if err != nil {
 		log.Fatalf("Failed to broadcast transactions: %v", err)
 	}
 
+	ethListener.Close()
 	<-ethListener.quit
 }

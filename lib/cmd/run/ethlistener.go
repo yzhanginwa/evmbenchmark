@@ -1,11 +1,13 @@
 package run
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/gorilla/websocket"
 	limiterpkg "github.com/yzhanginwa/evmbenchmark/lib/limiter"
@@ -43,15 +45,19 @@ type EthereumListener struct {
 	tuneBestMempool int
 
 	tpsLineActive bool // true when the cursor is sitting on the \r TPS line
+
+	cancelFunc context.CancelFunc // cancels sender goroutines on convergence
+	closeOnce  sync.Once
 }
 
-func NewEthereumListener(wsURL string, limiter *limiterpkg.RateLimiter, autoTune, verbose bool) *EthereumListener {
+func NewEthereumListener(wsURL string, limiter *limiterpkg.RateLimiter, autoTune, verbose bool, cancelFunc context.CancelFunc) *EthereumListener {
 	el := &EthereumListener{
-		wsURL:    wsURL,
-		limiter:  limiter,
-		quit:     make(chan struct{}),
-		autoTune: autoTune,
-		verbose:  verbose,
+		wsURL:      wsURL,
+		limiter:    limiter,
+		quit:       make(chan struct{}),
+		autoTune:   autoTune,
+		verbose:    verbose,
+		cancelFunc: cancelFunc,
 	}
 	if autoTune {
 		current := limiter.GetMax()
@@ -231,6 +237,9 @@ func (el *EthereumListener) adjustMempool(currentTPS int64) {
 		if blocked == 0 {
 			fmt.Println("[AutoTune] Warning: mempool never filled; cannot auto-tune. Use a smaller --mempool value.")
 			el.tuneConverged = true
+			if el.cancelFunc != nil {
+				el.cancelFunc()
+			}
 			return
 		}
 		el.tuneRefTPS = currentTPS
@@ -294,6 +303,9 @@ func (el *EthereumListener) adjustMempool(currentTPS int64) {
 					improvement*100, el.tuneStep, el.tuneMinStep)
 			}
 			el.tuneConverged = true
+			if el.cancelFunc != nil {
+				el.cancelFunc()
+			}
 			return
 		}
 		el.tuneDirection = -el.tuneDirection
@@ -319,6 +331,9 @@ func (el *EthereumListener) adjustMempool(currentTPS int64) {
 				improvement*100, el.tuneBestTPS, el.tuneBestMempool)
 		}
 		el.tuneConverged = true
+		if el.cancelFunc != nil {
+			el.cancelFunc()
+		}
 	}
 }
 
@@ -332,8 +347,10 @@ func (el *EthereumListener) ensureNewLine() {
 }
 
 func (el *EthereumListener) Close() {
-	if el.conn != nil {
-		el.conn.Close()
-	}
-	close(el.quit)
+	el.closeOnce.Do(func() {
+		if el.conn != nil {
+			el.conn.Close()
+		}
+		close(el.quit)
+	})
 }
