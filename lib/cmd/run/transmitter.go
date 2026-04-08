@@ -228,42 +228,6 @@ func (t *Transmitter) Broadcast(ctx context.Context, senders []generator.SenderI
 	return nil
 }
 
-// BroadcastTxsMap broadcasts a pre-generated map of transactions (used by the
-// load command which replays transactions stored on disk by gentx).
-func (t *Transmitter) BroadcastTxsMap(txsMap map[int]types.Transactions) error {
-	ch := make(chan error, len(txsMap))
-
-	for _, txs := range txsMap {
-		go func(txs []*types.Transaction) {
-			client, err := ethclient.Dial(t.RpcUrl)
-			if err != nil {
-				ch <- err
-				return
-			}
-			defer client.Close()
-
-			for _, tx := range txs {
-				if t.limiter != nil {
-					t.limiter.Acquire()
-				}
-				if err := broadcast(client, tx); err != nil {
-					ch <- err
-					return
-				}
-			}
-			ch <- nil
-		}(txs)
-	}
-
-	for i := 0; i < len(txsMap); i++ {
-		if err := <-ch; err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func broadcast(client *ethclient.Client, tx *types.Transaction) error {
 	err := client.SendTransaction(context.Background(), tx)
 	if err != nil {

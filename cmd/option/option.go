@@ -15,23 +15,9 @@ import (
 
 const FaucetPrivateKey = "0x1053fae1b3ac64f178bcc21026fd06a3f4544ec2f35338b001f02d1d8efa3d5f"
 
-// OptionsForRun registers flags for the run command (no tx-count; txs are
-// generated on-the-fly until each sender's ETH balance is exhausted).
+// OptionsForRun registers flags for the run command.
 func OptionsForRun(cmd *cobra.Command) {
 	cmd.Flags().StringP("faucet-private-key", "f", FaucetPrivateKey, "Private key of a faucet account")
 	cmd.Flags().IntP("sender-count", "s", 4, "The number of senders of generated transactions")
 	cmd.Flags().StringP("tx-type", "p", "simple", "Transaction type: simple, erc20, or uniswap")
-}
-
-// OptionsForGeneration registers flags for commands that pre-generate transactions
-// (e.g. gentx), including -t / --tx-count.
-func OptionsForGeneration(cmd *cobra.Command) {
-	cmd.Flags().StringP("faucet-private-key", "f", FaucetPrivateKey, "Private key of a faucet account")
-	cmd.Flags().IntP("sender-count", "s", 4, "The number of senders of generated transactions")
-	cmd.Flags().IntP("tx-count", "t", 100000, "The number of tx count each sender will broadcast")
-	cmd.Flags().StringP("tx-type", "p", "simple", "Transaction type: simple, erc20, or uniswap")
-}
-
-func OptionsForTxStore(cmd *cobra.Command) {
-	cmd.Flags().StringP("tx-store-dir", "d", "/tmp/yzhanginwa-evmbenchmark-dir", "The directory of storing generated transactions")
 }

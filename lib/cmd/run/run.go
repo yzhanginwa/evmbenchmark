@@ -9,7 +9,7 @@ import (
 )
 
 func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount int, txType string, mempool int, autoTune, verbose bool) {
-	gen, err := generator.NewGenerator(httpRpc, faucetPrivateKey, senderCount, 0, false, "")
+	gen, err := generator.NewGenerator(httpRpc, faucetPrivateKey, senderCount)
 	if err != nil {
 		log.Fatalf("Failed to create generator: %v", err)
 	}

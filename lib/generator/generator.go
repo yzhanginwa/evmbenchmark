@@ -15,7 +15,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 
 	"github.com/yzhanginwa/evmbenchmark/lib/account"
-	"github.com/yzhanginwa/evmbenchmark/lib/store"
 	"github.com/yzhanginwa/evmbenchmark/lib/util"
 )
 
@@ -34,16 +33,13 @@ type SenderInfo struct {
 type Generator struct {
 	FaucetAccount *account.Account
 	Senders       []*account.Account
-	Recipients    []string
 	RpcUrl        string
 	ChainID       *big.Int
 	GasPrice      *big.Int
-	ShouldPersist bool
-	Store         *store.Store
 	EIP1559       bool
 }
 
-func NewGenerator(rpcUrl, faucetPrivateKey string, senderCount, txCount int, shouldPersist bool, txStoreDir string) (*Generator, error) {
+func NewGenerator(rpcUrl, faucetPrivateKey string, senderCount int) (*Generator, error) {
 	client, err := ethclient.Dial(rpcUrl)
 	if err != nil {
 		return &Generator{}, err
@@ -94,26 +90,14 @@ func NewGenerator(rpcUrl, faucetPrivateKey string, senderCount, txCount int, sho
 		senders[i] = s
 	}
 
-	recipients := make([]string, txCount)
-	for i := 0; i < txCount; i++ {
-		r, err := account.GenerateRandomAddress()
-		if err != nil {
-			return &Generator{}, err
-		}
-		recipients[i] = r
-	}
-
 	client.Close()
 
 	return &Generator{
 		FaucetAccount: faucetAccount,
 		Senders:       senders,
-		Recipients:    recipients,
 		RpcUrl:        rpcUrl,
 		ChainID:       chainID,
 		GasPrice:      gasPrice,
-		ShouldPersist: shouldPersist,
-		Store:         store.NewStore(txStoreDir),
 		EIP1559:       eip1559,
 	}, nil
 }
@@ -139,13 +123,6 @@ func (g *Generator) prepareSenders() error {
 		err = client.SendTransaction(context.Background(), signedTx)
 		if err != nil {
 			return err
-		}
-
-		if g.ShouldPersist {
-			g.Store.AddPrepareTx(signedTx)
-			if err != nil {
-				return err
-			}
 		}
 
 		txs = append(txs, signedTx)
@@ -190,13 +167,6 @@ func (g *Generator) deployContract(gasLimit uint64, contractBin, contractABI str
 		return common.Address{}, err
 	}
 
-	if g.ShouldPersist {
-		g.Store.AddPrepareTx(tx)
-		if err != nil {
-			return common.Address{}, err
-		}
-	}
-
 	return ercContractAddress, nil
 }
 
@@ -231,13 +201,6 @@ func (g *Generator) executeContractFunction(gasLimit uint64, contractAddress com
 	_, err = bind.WaitMined(context.Background(), client, tx)
 	if err != nil {
 		return err
-	}
-
-	if g.ShouldPersist {
-		g.Store.AddPrepareTx(tx)
-		if err != nil {
-			return err
-		}
 	}
 
 	return nil

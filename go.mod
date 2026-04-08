@@ -6,7 +6,6 @@ require (
 	github.com/ethereum/go-ethereum v1.14.11
 	github.com/gorilla/websocket v1.4.2
 	github.com/spf13/cobra v1.8.1
-	golang.org/x/term v0.19.0
 )
 
 require (
