@@ -33,7 +33,7 @@ type SenderInfo struct {
 type Generator struct {
 	FaucetAccount *account.Account
 	Senders       []*account.Account
-	RpcUrl        string
+	client        *ethclient.Client
 	ChainID       *big.Int
 	GasPrice      *big.Int
 	EIP1559       bool
@@ -90,25 +90,21 @@ func NewGenerator(rpcUrl, faucetPrivateKey string, senderCount int) (*Generator,
 		senders[i] = s
 	}
 
-	client.Close()
-
 	return &Generator{
 		FaucetAccount: faucetAccount,
 		Senders:       senders,
-		RpcUrl:        rpcUrl,
+		client:        client,
 		ChainID:       chainID,
 		GasPrice:      gasPrice,
 		EIP1559:       eip1559,
 	}, nil
 }
 
-func (g *Generator) prepareSenders() error {
-	client, err := ethclient.Dial(g.RpcUrl)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
+func (g *Generator) Close() {
+	g.client.Close()
+}
 
+func (g *Generator) prepareSenders() error {
 	value := new(big.Int)
 	value.Mul(big.NewInt(1e18), big.NewInt(senderFundingEth))
 
@@ -120,7 +116,7 @@ func (g *Generator) prepareSenders() error {
 			return err
 		}
 
-		err = client.SendTransaction(context.Background(), signedTx)
+		err = g.client.SendTransaction(context.Background(), signedTx)
 		if err != nil {
 			return err
 		}
@@ -128,21 +124,10 @@ func (g *Generator) prepareSenders() error {
 		txs = append(txs, signedTx)
 	}
 
-	err = util.WaitForReceiptsOfTxs(client, txs, 20*time.Second)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return util.WaitForReceiptsOfTxs(g.client, txs, 20*time.Second)
 }
 
 func (g *Generator) deployContract(gasLimit uint64, contractBin, contractABI string, args ...interface{}) (common.Address, error) {
-	client, err := ethclient.Dial(g.RpcUrl)
-	if err != nil {
-		return common.Address{}, err
-	}
-	defer client.Close()
-
 	tx, err := GenerateContractCreationTx(
 		g.FaucetAccount.PrivateKey,
 		g.FaucetAccount.GetNonce(),
@@ -157,26 +142,15 @@ func (g *Generator) deployContract(gasLimit uint64, contractBin, contractABI str
 		return common.Address{}, err
 	}
 
-	err = client.SendTransaction(context.Background(), tx)
+	err = g.client.SendTransaction(context.Background(), tx)
 	if err != nil {
 		return common.Address{}, err
 	}
 
-	ercContractAddress, err := bind.WaitDeployed(context.Background(), client, tx)
-	if err != nil {
-		return common.Address{}, err
-	}
-
-	return ercContractAddress, nil
+	return bind.WaitDeployed(context.Background(), g.client, tx)
 }
 
 func (g *Generator) executeContractFunction(gasLimit uint64, contractAddress common.Address, contractABI, methodName string, args ...interface{}) error {
-	client, err := ethclient.Dial(g.RpcUrl)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
 	tx, err := GenerateContractCallingTx(
 		g.FaucetAccount.PrivateKey,
 		contractAddress.Hex(),
@@ -190,56 +164,38 @@ func (g *Generator) executeContractFunction(gasLimit uint64, contractAddress com
 		args...,
 	)
 	if err != nil {
-		return nil
+		return err
 	}
 
-	err = client.SendTransaction(context.Background(), tx)
+	err = g.client.SendTransaction(context.Background(), tx)
 	if err != nil {
 		return err
 	}
 
-	_, err = bind.WaitMined(context.Background(), client, tx)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	_, err = bind.WaitMined(context.Background(), g.client, tx)
+	return err
 }
 
 func (g *Generator) callContractView(contractAddress common.Address, contractABI, methodName string, args ...interface{}) ([]interface{}, error) {
-	client, err := ethclient.Dial(g.RpcUrl)
-	if err != nil {
-		return []interface{}{}, err
-	}
-	defer client.Close()
-
-	// Parse the contract's ABI
 	parsedABI, err := abi.JSON(strings.NewReader(contractABI))
 	if err != nil {
-		return []interface{}{}, err
+		return nil, err
 	}
 
 	data, err := parsedABI.Pack(methodName, args...)
 	if err != nil {
-		return []interface{}{}, err
+		return nil, err
 	}
 
-	// Create a call message
 	msg := ethereum.CallMsg{
 		To:   &contractAddress,
 		Data: data,
 	}
 
-	// Send the call
-	result, err := client.CallContract(context.Background(), msg, nil)
+	result, err := g.client.CallContract(context.Background(), msg, nil)
 	if err != nil {
-		return []interface{}{}, err
+		return nil, err
 	}
 
-	unpacked, err := parsedABI.Unpack(methodName, result)
-	if err != nil {
-		return []interface{}{}, err
-	}
-
-	return unpacked, nil
+	return parsedABI.Unpack(methodName, result)
 }

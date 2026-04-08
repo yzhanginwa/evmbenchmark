@@ -15,33 +15,103 @@ import (
 	limiterpkg "github.com/yzhanginwa/evmbenchmark/lib/limiter"
 )
 
-const (
-	simpleTransferGasLimit = uint64(21000)
-	contractCallGasLimit   = uint64(210000)
-	simpleTransferValue    = int64(10000000000000) // 1/100,000 ETH in wei
-)
+// TxBuilder builds a transaction for a given sender at a given nonce.
+type TxBuilder interface {
+	Build(si generator.SenderInfo, nonce uint64, gasPrice *big.Int, txIndex int) (*types.Transaction, error)
+	GasLimit() uint64
+	TransferValue() *big.Int
+}
+
+// --- Simple transfer builder ---
+
+type simpleTxBuilder struct{}
+
+func (b simpleTxBuilder) GasLimit() uint64         { return 21000 }
+func (b simpleTxBuilder) TransferValue() *big.Int   { return big.NewInt(10000000000000) } // 1/100,000 ETH
+
+func (b simpleTxBuilder) Build(si generator.SenderInfo, nonce uint64, gasPrice *big.Int, txIndex int) (*types.Transaction, error) {
+	recipient, err := account.GenerateRandomAddress()
+	if err != nil {
+		return nil, err
+	}
+	return generator.GenerateSimpleTransferTx(
+		si.Account.PrivateKey, recipient, nonce,
+		si.ChainID, gasPrice, b.TransferValue(), si.EIP1559,
+	)
+}
+
+// --- ERC20 transfer builder ---
+
+type erc20TxBuilder struct{}
+
+func (b erc20TxBuilder) GasLimit() uint64         { return 210000 }
+func (b erc20TxBuilder) TransferValue() *big.Int   { return big.NewInt(0) }
+
+func (b erc20TxBuilder) Build(si generator.SenderInfo, nonce uint64, gasPrice *big.Int, txIndex int) (*types.Transaction, error) {
+	recipient, err := account.GenerateRandomAddress()
+	if err != nil {
+		return nil, err
+	}
+	return generator.GenerateContractCallingTx(
+		si.Account.PrivateKey, si.ContractAddress, nonce,
+		si.ChainID, gasPrice, b.GasLimit(), si.EIP1559,
+		erc20.MyTokenABI, "transfer",
+		common.HexToAddress(recipient), big.NewInt(1000),
+	)
+}
+
+// --- Uniswap swap builder ---
+
+type uniswapTxBuilder struct{}
+
+func (b uniswapTxBuilder) GasLimit() uint64         { return 210000 }
+func (b uniswapTxBuilder) TransferValue() *big.Int   { return big.NewInt(0) }
+
+func (b uniswapTxBuilder) Build(si generator.SenderInfo, nonce uint64, gasPrice *big.Int, txIndex int) (*types.Transaction, error) {
+	var amount0out, amount1out *big.Int
+	if txIndex%2 == 1 {
+		amount0out = big.NewInt(1000)
+		amount1out = big.NewInt(0)
+	} else {
+		amount0out = big.NewInt(0)
+		amount1out = big.NewInt(1000)
+	}
+	return generator.GenerateContractCallingTx(
+		si.Account.PrivateKey, si.ContractAddress, nonce,
+		si.ChainID, gasPrice, b.GasLimit(), si.EIP1559,
+		uniswap.UniswapV2PairABI, "swap",
+		amount0out, amount1out, si.Account.Address, []byte{},
+	)
+}
+
+// NewTxBuilder returns a TxBuilder for the given transaction type.
+func NewTxBuilder(txType string) TxBuilder {
+	switch txType {
+	case "simple":
+		return simpleTxBuilder{}
+	case "erc20":
+		return erc20TxBuilder{}
+	case "uniswap":
+		return uniswapTxBuilder{}
+	default:
+		return nil
+	}
+}
+
+// --- Transmitter ---
 
 type Transmitter struct {
-	RpcUrl  string
+	rpcUrl  string
 	limiter *limiterpkg.RateLimiter
 }
 
-func NewTransmitter(rpcUrl string, limiter *limiterpkg.RateLimiter) (*Transmitter, error) {
-	return &Transmitter{
-		RpcUrl:  rpcUrl,
-		limiter: limiter,
-	}, nil
+func NewTransmitter(rpcUrl string, limiter *limiterpkg.RateLimiter) *Transmitter {
+	return &Transmitter{rpcUrl: rpcUrl, limiter: limiter}
 }
 
 // freshGasPrice fetches the current gas price from the node using the same
 // EIP-1559 logic as the generator, so it is always up-to-date at broadcast time.
-func (t *Transmitter) freshGasPrice(eip1559 bool) (*big.Int, error) {
-	client, err := ethclient.Dial(t.RpcUrl)
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
-
+func freshGasPrice(client *ethclient.Client, eip1559 bool) (*big.Int, error) {
 	if eip1559 {
 		header, err := client.HeaderByNumber(context.Background(), nil)
 		if err != nil {
@@ -63,16 +133,19 @@ const gasPriceRefreshEvery = 50
 
 // Broadcast spawns one goroutine per sender. Each goroutine generates and signs
 // transactions on-the-fly until the sender's ETH balance is exhausted.
-func (t *Transmitter) Broadcast(ctx context.Context, senders []generator.SenderInfo, txType string) error {
+func (t *Transmitter) Broadcast(ctx context.Context, senders []generator.SenderInfo, builder TxBuilder) error {
 	if len(senders) == 0 {
 		return nil
 	}
+
+	gasLimit := builder.GasLimit()
+	transferValue := builder.TransferValue()
 
 	ch := make(chan error, len(senders))
 
 	for _, si := range senders {
 		go func(si generator.SenderInfo) {
-			client, err := ethclient.Dial(t.RpcUrl)
+			client, err := ethclient.Dial(t.rpcUrl)
 			if err != nil {
 				ch <- err
 				return
@@ -81,26 +154,15 @@ func (t *Transmitter) Broadcast(ctx context.Context, senders []generator.SenderI
 
 			balance := new(big.Int).Set(si.Balance)
 
-			var gasLimit uint64
-			var transferValue *big.Int
-			switch txType {
-			case "simple":
-				gasLimit = simpleTransferGasLimit
-				transferValue = big.NewInt(simpleTransferValue)
-			default: // erc20, uniswap
-				gasLimit = contractCallGasLimit
-				transferValue = big.NewInt(0)
-			}
-
-			// Fetch initial gas price and compute per-tx cost.
-			// cost is recomputed whenever gasPrice is refreshed.
-			gasPrice, err := t.freshGasPrice(si.EIP1559)
+			gasPrice, err := freshGasPrice(client, si.EIP1559)
 			if err != nil {
 				ch <- err
 				return
 			}
-			gasCost := new(big.Int).Mul(gasPrice, new(big.Int).SetUint64(gasLimit))
-			cost := new(big.Int).Add(gasCost, transferValue)
+			cost := new(big.Int).Add(
+				new(big.Int).Mul(gasPrice, new(big.Int).SetUint64(gasLimit)),
+				transferValue,
+			)
 
 			txIndex := 0
 			for {
@@ -115,89 +177,23 @@ func (t *Transmitter) Broadcast(ctx context.Context, senders []generator.SenderI
 					break
 				}
 
-				// Periodically refresh gas price to stay ahead of rising base fees.
 				if txIndex > 0 && txIndex%gasPriceRefreshEvery == 0 {
-					if fresh, err := t.freshGasPrice(si.EIP1559); err == nil {
+					if fresh, err := freshGasPrice(client, si.EIP1559); err == nil {
 						gasPrice = fresh
-						gasCost := new(big.Int).Mul(gasPrice, new(big.Int).SetUint64(gasLimit))
-						cost = new(big.Int).Add(gasCost, transferValue)
+						cost = new(big.Int).Add(
+							new(big.Int).Mul(gasPrice, new(big.Int).SetUint64(gasLimit)),
+							transferValue,
+						)
 					}
 				}
 
-				nonce := si.Account.GetNonce()
-
-				var tx *types.Transaction
-				switch txType {
-				case "simple":
-					recipient, err := account.GenerateRandomAddress()
-					if err != nil {
-						ch <- err
-						return
-					}
-					tx, err = generator.GenerateSimpleTransferTx(
-						si.Account.PrivateKey, recipient, nonce,
-						si.ChainID, gasPrice, transferValue, si.EIP1559,
-					)
-					if err != nil {
-						ch <- err
-						return
-					}
-				case "erc20":
-					recipient, err := account.GenerateRandomAddress()
-					if err != nil {
-						ch <- err
-						return
-					}
-					tx, err = generator.GenerateContractCallingTx(
-						si.Account.PrivateKey,
-						si.ContractAddress,
-						nonce,
-						si.ChainID,
-						gasPrice,
-						gasLimit,
-						si.EIP1559,
-						erc20.MyTokenABI,
-						"transfer",
-						common.HexToAddress(recipient),
-						big.NewInt(1000),
-					)
-					if err != nil {
-						ch <- err
-						return
-					}
-				case "uniswap":
-					var amount0out, amount1out *big.Int
-					if txIndex%2 == 1 {
-						amount0out = big.NewInt(1000)
-						amount1out = big.NewInt(0)
-					} else {
-						amount0out = big.NewInt(0)
-						amount1out = big.NewInt(1000)
-					}
-					tx, err = generator.GenerateContractCallingTx(
-						si.Account.PrivateKey,
-						si.ContractAddress,
-						nonce,
-						si.ChainID,
-						gasPrice,
-						gasLimit,
-						si.EIP1559,
-						uniswap.UniswapV2PairABI,
-						"swap",
-						amount0out,
-						amount1out,
-						si.Account.Address,
-						[]byte{},
-					)
-					if err != nil {
-						ch <- err
-						return
-					}
+				tx, err := builder.Build(si, si.Account.GetNonce(), gasPrice, txIndex)
+				if err != nil {
+					ch <- err
+					return
 				}
 
-				if t.limiter != nil {
-					t.limiter.Acquire()
-				}
+				t.limiter.Acquire()
 
 				select {
 				case <-ctx.Done():
@@ -206,7 +202,7 @@ func (t *Transmitter) Broadcast(ctx context.Context, senders []generator.SenderI
 				default:
 				}
 
-				if err := broadcast(client, tx); err != nil {
+				if err := client.SendTransaction(context.Background(), tx); err != nil {
 					ch <- err
 					return
 				}
@@ -219,19 +215,11 @@ func (t *Transmitter) Broadcast(ctx context.Context, senders []generator.SenderI
 		}(si)
 	}
 
-	for i := 0; i < len(senders); i++ {
+	for range senders {
 		if err := <-ch; err != nil {
 			return err
 		}
 	}
 
-	return nil
-}
-
-func broadcast(client *ethclient.Client, tx *types.Transaction) error {
-	err := client.SendTransaction(context.Background(), tx)
-	if err != nil {
-		return err
-	}
 	return nil
 }
