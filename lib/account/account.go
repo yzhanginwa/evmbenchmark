@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -58,6 +59,16 @@ func (account *Account) GetNonce() uint64 {
 	now := account.Nonce
 	account.Nonce += 1
 	return now
+}
+
+// GenerateRandomAddress generates a random Ethereum address without a private key.
+func GenerateRandomAddress() (string, error) {
+	address := make([]byte, 20)
+	_, err := rand.Read(address)
+	if err != nil {
+		return "", err
+	}
+	return "0x" + hex.EncodeToString(address), nil
 }
 
 func convertPrivateKeyFromStringForm(privateKey string) (*ecdsa.PrivateKey, error) {

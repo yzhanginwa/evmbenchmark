@@ -1,14 +1,14 @@
-package run
+package benchmark
 
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/yzhanginwa/evmbenchmark/lib/generator"
-	limiterpkg "github.com/yzhanginwa/evmbenchmark/lib/limiter"
 )
 
-func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount int, txType string, mempool int) {
+func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount int, txType string, mempool int, duration time.Duration) {
 	builder := NewTxBuilder(txType)
 	if builder == nil {
 		log.Fatalf("Transaction type %q is not valid", txType)
@@ -34,29 +34,28 @@ func Run(httpRpc, wsRpc, faucetPrivateKey string, senderCount int, txType string
 		log.Fatalf("Failed to prepare: %v", err)
 	}
 
-	limiter := limiterpkg.NewRateLimiter(mempool)
+	limiter := newRateLimiter(mempool)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
 
-	ethListener := NewEthereumListener(wsRpc, limiter)
-	err = ethListener.Connect()
+	listener := newEthereumListener(wsRpc, limiter, cancel)
+	err = listener.Connect()
 	if err != nil {
 		log.Fatalf("Failed to connect to WebSocket: %v", err)
 	}
 
-	err = ethListener.SubscribeNewHeads()
+	err = listener.SubscribeNewHeads()
 	if err != nil {
 		log.Fatalf("Failed to subscribe to new heads: %v", err)
 	}
 
-	transmitter := NewTransmitter(httpRpc, limiter)
+	transmitter := newTransmitter(httpRpc, limiter)
 
 	err = transmitter.Broadcast(ctx, senders, builder)
 	if err != nil {
 		log.Fatalf("Failed to broadcast transactions: %v", err)
 	}
 
-	ethListener.Close()
-	<-ethListener.quit
+	listener.Close()
+	<-listener.quit
 }

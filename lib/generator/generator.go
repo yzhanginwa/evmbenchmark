@@ -2,6 +2,7 @@ package generator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -15,7 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 
 	"github.com/yzhanginwa/evmbenchmark/lib/account"
-	"github.com/yzhanginwa/evmbenchmark/lib/util"
+	"github.com/yzhanginwa/evmbenchmark/lib/contracts/erc20"
 )
 
 // senderFundingEth is the amount of ETH sent to each sender during preparation.
@@ -104,6 +105,43 @@ func (g *Generator) Close() {
 	g.client.Close()
 }
 
+// prepare funds all senders and returns SenderInfo with the given contract address
+// (empty string for simple transfers).
+func (g *Generator) prepare(contractAddress string) ([]SenderInfo, error) {
+	err := g.prepareSenders()
+	if err != nil {
+		return nil, err
+	}
+
+	funded := new(big.Int).Mul(big.NewInt(1e18), big.NewInt(senderFundingEth))
+
+	senders := make([]SenderInfo, len(g.Senders))
+	for i, sender := range g.Senders {
+		senders[i] = SenderInfo{
+			Account:         sender,
+			Balance:         new(big.Int).Set(funded),
+			ContractAddress: contractAddress,
+			ChainID:         g.ChainID,
+			EIP1559:         g.EIP1559,
+		}
+	}
+	return senders, nil
+}
+
+// PrepareSimple funds sender accounts for simple ETH transfers.
+func (g *Generator) PrepareSimple() ([]SenderInfo, error) {
+	return g.prepare("")
+}
+
+// PrepareERC20 deploys an ERC20 contract, funds senders, and returns SenderInfo.
+func (g *Generator) PrepareERC20() ([]SenderInfo, error) {
+	contractAddress, err := g.deployContract(erc20ContractGasLimit, erc20.MyTokenBin, erc20.MyTokenABI, "My Token", "MYTOKEN")
+	if err != nil {
+		return nil, err
+	}
+	return g.prepare(contractAddress.Hex())
+}
+
 func (g *Generator) prepareSenders() error {
 	value := new(big.Int)
 	value.Mul(big.NewInt(1e18), big.NewInt(senderFundingEth))
@@ -124,7 +162,7 @@ func (g *Generator) prepareSenders() error {
 		txs = append(txs, signedTx)
 	}
 
-	return util.WaitForReceiptsOfTxs(g.client, txs, 20*time.Second)
+	return waitForReceipts(g.client, txs, 20*time.Second)
 }
 
 func (g *Generator) deployContract(gasLimit uint64, contractBin, contractABI string, args ...interface{}) (common.Address, error) {
@@ -198,4 +236,29 @@ func (g *Generator) callContractView(contractAddress common.Address, contractABI
 	}
 
 	return parsedABI.Unpack(methodName, result)
+}
+
+func waitForReceipts(client *ethclient.Client, txs types.Transactions, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	for _, tx := range txs {
+		txHash := tx.Hash()
+		for {
+			_, err := client.TransactionReceipt(context.Background(), txHash)
+			if err == nil {
+				break
+			}
+			if err != ethereum.NotFound {
+				return err
+			}
+			select {
+			case <-ctx.Done():
+				return errors.New("timeout waiting for transaction receipts")
+			default:
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+	}
+	return nil
 }

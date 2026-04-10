@@ -11,6 +11,15 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
+const (
+	simpleTransferGasLimit    = uint64(21000)
+	erc20ContractGasLimit     = uint64(810000)
+	erc20TransferGasLimit     = uint64(210000)
+	uniswapContractGasLimit   = uint64(3210000)
+	uniswapCreatePairGasLimit = uint64(210000)
+	uniswapMintGasLimit       = uint64(210000)
+)
+
 func GenerateSimpleTransferTx(privateKey *ecdsa.PrivateKey, recipient string, nonce uint64, chainID, gasPrice, value *big.Int, eip1559 bool) (*types.Transaction, error) {
 	toAddress := common.HexToAddress(recipient)
 

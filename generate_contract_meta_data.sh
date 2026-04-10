@@ -4,7 +4,7 @@
 # The module_name will be used as the go package name
 for dir in contracts/build/*/; do
     package=$(basename ${dir})
-    destdir=lib/contract_meta_data/${package}
+    destdir=lib/contracts/${package}
     mkdir -p ${destdir}
     destfile=${destdir}/meta_data.go
 
