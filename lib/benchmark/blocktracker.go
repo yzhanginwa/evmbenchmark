@@ -13,6 +13,7 @@ import (
 )
 
 type BlockInfo struct {
+	Number   int64
 	Time     int64
 	TxCount  int64
 	GasUsed  int64
@@ -30,8 +31,8 @@ type EthereumListener struct {
 
 	pendingBlock  *BlockInfo // header info waiting for tx count
 	tpsLineActive bool
-	cancelFunc    context.CancelFunc
-	closeOnce     sync.Once
+	cancelFunc      context.CancelFunc
+	closeOnce       sync.Once
 }
 
 func newEthereumListener(wsURL string, limiter *rateLimiter, cancel context.CancelFunc) *EthereumListener {
@@ -87,37 +88,52 @@ func (el *EthereumListener) listenForMessages() {
 			el.handleNewHead(response)
 		} else if id, _ := response["id"].(float64); id == 2 {
 			el.handleTxCountResponse(response)
+		} else if id == 3 {
+			el.handleGasResponse(response)
 		}
 		// Ignore subscription confirmation (id:1) and other responses.
 	}
 }
 
-// handleNewHead extracts block header info from the subscription notification
-// and requests the transaction count separately.
+// handleNewHead extracts header info (including gas) from the subscription notification
+// and sends a follow-up request for the tx count (id:2).
 func (el *EthereumListener) handleNewHead(response map[string]interface{}) {
 	params := response["params"].(map[string]interface{})
 	result := params["result"].(map[string]interface{})
 
 	blockNo := result["number"].(string)
+	blockNum, _ := strconv.ParseInt(blockNo[2:], 16, 64)
 	ts, _ := strconv.ParseInt(result["timestamp"].(string)[2:], 16, 64)
-	gasUsed, _ := strconv.ParseInt(result["gasUsed"].(string)[2:], 16, 64)
-	gasLimit, _ := strconv.ParseInt(result["gasLimit"].(string)[2:], 16, 64)
 
-	el.pendingBlock = &BlockInfo{Time: ts, GasUsed: gasUsed, GasLimit: gasLimit}
+	el.pendingBlock = &BlockInfo{Number: blockNum, Time: ts}
 
-	request := map[string]interface{}{
+	// Request tx count for current block.
+	txCountReq := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "eth_getBlockTransactionCountByNumber",
 		"params":  []interface{}{blockNo},
 	}
-	err := el.conn.WriteJSON(request)
-	if err != nil {
+	if err := el.conn.WriteJSON(txCountReq); err != nil {
 		log.Println("Failed to send tx count request:", err)
+	}
+
+	// Request full previous block for gas info (current block may not be indexed yet).
+	if blockNum > 0 {
+		prevBlockNo := fmt.Sprintf("0x%x", blockNum-1)
+		blockReq := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      3,
+			"method":  "eth_getBlockByNumber",
+			"params":  []interface{}{prevBlockNo, false},
+		}
+		if err := el.conn.WriteJSON(blockReq); err != nil {
+			log.Println("Failed to send block request:", err)
+		}
 	}
 }
 
-// handleTxCountResponse processes the tx count response and completes the block info.
+// handleTxCountResponse processes the tx count and triggers block processing.
 func (el *EthereumListener) handleTxCountResponse(response map[string]interface{}) {
 	if el.pendingBlock == nil {
 		return
@@ -129,12 +145,33 @@ func (el *EthereumListener) handleTxCountResponse(response map[string]interface{
 	}
 	txCount, _ := strconv.ParseInt(resultStr[2:], 16, 64)
 
+	el.pendingBlock.TxCount = txCount
 	block := *el.pendingBlock
-	block.TxCount = txCount
 	el.pendingBlock = nil
 
 	el.limiter.release(int(txCount))
 	el.processBlock(block)
+}
+
+// handleGasResponse applies gas info from eth_getBlockByNumber to the matching block in blockStat.
+func (el *EthereumListener) handleGasResponse(response map[string]interface{}) {
+	result, ok := response["result"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	numStr, _ := result["number"].(string)
+	blockNum, _ := strconv.ParseInt(numStr[2:], 16, 64)
+	gasUsed, _ := strconv.ParseInt(result["gasUsed"].(string)[2:], 16, 64)
+	gasLimit, _ := strconv.ParseInt(result["gasLimit"].(string)[2:], 16, 64)
+
+	for i := range el.blockStat {
+		if el.blockStat[i].Number == blockNum {
+			el.blockStat[i].GasUsed = gasUsed
+			el.blockStat[i].GasLimit = gasLimit
+			return
+		}
+	}
 }
 
 func (el *EthereumListener) processBlock(block BlockInfo) {
@@ -146,7 +183,7 @@ func (el *EthereumListener) processBlock(block BlockInfo) {
 	}
 
 	timeSpan := el.blockStat[len(el.blockStat)-1].Time - el.blockStat[0].Time
-	if timeSpan <= 30 {
+	if timeSpan <= 5 {
 		return
 	}
 
@@ -167,7 +204,7 @@ func (el *EthereumListener) processBlock(block BlockInfo) {
 		el.bestTPS = tps
 		el.gasUsedAtBestTPS = gasUsedPercent
 	}
-	fmt.Printf("\rTPS: %-6d  GasUsed: %-6.2f%%", tps, gasUsedPercent*100)
+	fmt.Printf("\rTPS: %-6d  GasUsed: %.2f%%", tps, gasUsedPercent*100)
 	el.tpsLineActive = true
 
 	if totalTxCount < 100 {

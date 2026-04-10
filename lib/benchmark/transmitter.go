@@ -198,8 +198,15 @@ func (t *Transmitter) Broadcast(ctx context.Context, senders []generator.SenderI
 				}
 
 				if err := client.SendTransaction(context.Background(), tx); err != nil {
-					ch <- err
-					return
+					// Refresh gas price and retry on fee-related errors.
+					if fresh, fErr := freshGasPrice(client, si.EIP1559); fErr == nil {
+						gasPrice = fresh
+						cost = new(big.Int).Add(
+							new(big.Int).Mul(gasPrice, new(big.Int).SetUint64(gasLimit)),
+							transferValue,
+						)
+					}
+					continue
 				}
 
 				balance.Sub(balance, cost)
